@@ -1,0 +1,204 @@
+.intel_syntax noprefix
+
+.section .rodata
+OK:
+        .ascii "HTTP/1.0 200 OK\r\n\r\n"
+OK_LEN:
+        .quad OK_LEN - OK
+
+.section .text
+.global _start
+_start:
+        mov rbp, rsp
+
+        call init_listener
+        mov r12, rax /* Save listenfd */
+
+        /* Accept */
+        mov rdi, r12
+        mov rsi, 0
+        mov rdx, 0
+        mov rax, 43
+        syscall
+
+        mov r13, rax /* Save clientfd */
+
+        /* Read request */
+        sub rsp, 256
+        mov rdi, r13
+        mov rsi, rsp
+        mov rdx, 256
+        mov rax, 0
+        syscall
+
+        mov r14, rax /* save inbuf len*/
+
+        mov rdi, rsp    /* inbuf */
+        mov rsi, r14    /* inbuf len */
+        sub rsp, 16      /* saveptr--16 byte aligned */
+        mov rdx, rsp
+        call parse_token
+
+        lea rdi, [rsp + 16]    /* inbuf */
+        mov rsi, r14    /* inbuf len */
+        mov rdx, rsp    /* saveptr */
+        call parse_token
+
+        /* Ouput Path */
+        mov rdi, 1
+        mov rsi, rax
+        /* get str len */
+        mov rdx, [rsp] /* end ptr */
+        sub rdx, rax /* start ptr */
+        mov rax, 1
+        syscall
+
+        /* Output request
+        mov rdi, 1
+        lea rsi, [rsp + 16]
+        mov rdx, rax
+        mov rax, 1
+        syscall
+        */
+
+        /* Static response */
+        mov rdi, r13
+        lea rsi, OK
+        mov rdx, OK_LEN
+        mov rax, 1
+        syscall
+
+        /* Close clientfd */
+        mov rdi, r13
+        mov rax, 3
+        syscall
+
+        /* Close listenfd */
+        mov rdi, r12
+        mov rax, 3
+        syscall
+
+        mov rdi, 0
+        mov rax, 60
+        syscall
+
+/*
+Create, initialize, bind, and make listen a socket--return sockfd in rax.
+*/
+init_listener:
+        push rbp
+        mov rbp, rsp
+
+        /* Create socket */
+        mov rdi, 2 /* AF_INET */
+        mov rsi, 1 /* SOCK_STREAM */
+        mov rdx, 0 /* IPPROTO_IP --> IPPROTO_TCP */
+        mov rax, 41
+        syscall
+
+        mov r8, rax /* save sockfd */
+
+        /* Construct sockaddr_in */
+        sub rsp, 16                             /* allocate 16 bytes on stack */
+        mov BYTE PTR [rbp - 0x10], 0x02         /* AF_INET */
+        mov BYTE PTR [rbp - 0x0f], 0x00
+        mov BYTE PTR [rbp - 0x0e], 0x08         /* port 80 */
+        mov BYTE PTR [rbp - 0x0d], 0x00
+        mov DWORD PTR [rbp - 0x0c], 0x00        /* 0.0.0.0 */
+        mov QWORD PTR [rbp - 0x08], 0x00        /* padding */
+
+        /* Bind socket */
+        mov rdi, r8
+        lea rsi, [rbp - 0x10]
+        mov rdx, 16
+        mov rax, 49
+        syscall
+
+        /* Listen */
+        mov rdi, r8
+        mov rsi, 0x00
+        mov rax, 50
+        syscall
+
+        /* Return listening socket */
+        mov rax, r8
+
+        mov rsp, rbp
+        pop rbp
+        ret
+
+/*
+Takes in a pointer to the HTTP GET request alongside it's length and stores the url path in fname buffer (outbuf_len >= inbuf_len)
+params: rdi(ptr) outbuf, rsi(ptr) inbuf, rdx(int) inbuf_len
+*/
+parse_request:
+        push rbp
+        mov rbp, rsp
+
+
+        mov rsp, rbp
+        pop rbp
+        ret
+
+/*
+Parse first token in given text buffer, setting the delimter (space) to '\0' so that the token can
+be read as a string.
+params: rdi(ptr) inbuf, rsi(int) inbuf_len, rdx(ptr ptr) saveptr
+returns: ptr to start of token
+*/
+parse_token:
+        push rbp
+        mov rbp, rsp
+
+        xor rcx, rcx
+        mov rax, 0 /* set error code ahead of time */
+
+        cmp QWORD PTR [rdx], 0
+        je find_start
+
+        /* Use saved pointer */
+        mov rdi, [rdx]
+
+find_start: /* Find token start index */
+        cmp BYTE PTR [rdi + rcx], 0x20 /* space */
+        jne start_found
+
+        cmp BYTE PTR [rdi + rcx], 0x00
+        je parse_token_done
+
+        inc rcx
+        cmp rcx, rsi
+        jb find_start
+
+        /* No start or terminator found before end of inbuf--abort.
+        This should never run because the string should be terminated with a '\0'. */
+        mov rax, -1
+        jmp parse_token_done
+
+start_found: /* Start of token found */
+        lea rax, [rdi + rcx] /* Save start in rax */
+find_end:
+        cmp BYTE PTR [rdi + rcx], 0x20
+        je place_null
+
+        cmp BYTE PTR [rdi + rcx], 0x00
+        je parse_token_done
+
+        inc rcx
+        cmp rcx, rsi
+        jb find_end
+
+        /* Assume str ends with '\0' so it doesn't need to be set */
+        jmp parse_token_done
+place_null:
+        mov BYTE PTR [rdi + rcx], 0x0
+
+parse_token_done:
+        /* Save where left off */
+        lea r8, [rdi + rcx + 1]
+        mov [rdx], r8
+
+        mov rsp, rbp
+        pop rbp
+        ret
+

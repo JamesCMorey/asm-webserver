@@ -185,63 +185,87 @@ parse_request:
         ret
 
 /*
-Parse first token in given text buffer, setting the delimter (space) to '\0' so that the token can
-be read as a string. Pass NULL for inbuf to use saved ptr
-params: rdi(ptr) inbuf, rsi(int) inbuf_len, rdx(ptr ptr) saveptr
-returns: ptr to start of token
+Parses next token in given text buffer up to the specified delimiter.
+
+char * parse_token(char *inbuf,
+                   size_t inbuf_len,
+                   char **saveptr,
+                   char delim);
+
+
+RETURN
+- Returns pointer to start of first token found or NULL if none found.
+- Replaces delimiter with null to make the token a C string.
+
+SAVEPTR
+- If end of token is found, saves position in *saveptr so that it can continue
+        where it left off. Otherwise, sets *saveptr to NULL.
+- If *saveptr is non-NULL, continues parsing from that position.
+        Otherwise, parse from beginning of inbuf.
+
+SAFETY
+- Parsing does not go past inbuf_len.
+- Will not read past NULL terminators.
+- If a token continues past inbuf_len, the token will include all
+        remaining bytes and not be terminated. *saveptr will be set to
+        NULL.
 */
 parse_token:
         push rbp
         mov rbp, rsp
 
-        xor rcx, rcx
-        mov rax, 0 /* set error code ahead of time */
+        xor r8, r8
 
-        cmp rdi, 0
-        jne find_start
-
-        /* Use saved pointer */
+        /* Load saveptr if non-NULL */
+        cmp QWORD PTR [rdx], 0
+        je find_start
         mov rdi, [rdx]
 
 find_start: /* Find token start index */
-        cmp BYTE PTR [rdi + rcx], 0x20 /* space */
+        cmp r8, rsi
+        jae no_token /* No token found before end of inbuf */
+
+        cmp BYTE PTR [rdi + r8], 0 /* NULL */
+        je no_token /* no token found before end of str */
+
+        cmp BYTE PTR [rdi + r8], cl /* delim */
         jne start_found
 
-        cmp BYTE PTR [rdi + rcx], 0x00
-        je parse_token_done
-
-        inc rcx
-        cmp rcx, rsi
-        jb find_start
-
-        /* No start or terminator found before end of inbuf--abort.
-        This should never run because the string should be terminated with a '\0'. */
-        mov rax, -1
-        jmp parse_token_done
+        inc r8
+        jmp find_start
 
 start_found: /* Start of token found */
-        lea rax, [rdi + rcx] /* Save start in rax */
-find_end:
-        cmp BYTE PTR [rdi + rcx], 0x20
-        je place_null
+        lea rax, [rdi + r8] /* Save start in rax */
 
-        cmp BYTE PTR [rdi + rcx], 0x00
-        je parse_token_done
-
-        inc rcx
-        cmp rcx, rsi
-        jb find_end
-
+find_end: /* Scan to end of token */
+        cmp r8, rsi
         /* Assume str ends with '\0' so it doesnt need to be set */
-        jmp parse_token_done
-place_null:
-        mov BYTE PTR [rdi + rcx], 0x0
+        jae no_end
 
-parse_token_done:
+        mov r9b, [rdi + r8]
+        test r9b, r9b   /* NULL check */
+        jz parse_done
+        cmp r9b, cl     /* delim check */
+        je parse_done
+
+        inc r8
+        jmp find_end
+
+parse_done:
+        /* Add NULL terminator */
+        mov BYTE PTR [rdi + r8], 0
+
         /* Save where left off */
-        lea r8, [rdi + rcx + 1]
-        mov [rdx], r8
+        lea r9, [rdi + r8 + 1]
+        mov [rdx], r9
 
+        jmp exit_parse_token
+
+no_token:
+        mov rax, 0
+no_end:
+        mov QWORD PTR [rdx], 0
+exit_parse_token:
         mov rsp, rbp
         pop rbp
         ret

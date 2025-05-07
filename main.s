@@ -31,40 +31,65 @@ _start:
         mov rax, 0
         syscall
 
-        mov r14, rax /* save inbuf len*/
+        mov r14, rax /* save inbuf len */
 
+        /* Token 1 */
         mov rdi, rsp    /* inbuf */
         mov rsi, r14    /* inbuf len */
         sub rsp, 16      /* saveptr--16 byte aligned */
         mov rdx, rsp
         call parse_token
 
+        /* Token 2 (file path) */
         lea rdi, [rsp + 16]    /* inbuf */
         mov rsi, r14    /* inbuf len */
         mov rdx, rsp    /* saveptr */
         call parse_token
 
-        /* Ouput Path */
-        mov rdi, 1
-        mov rsi, rax
-        /* get str len */
-        mov rdx, [rsp] /* end ptr */
-        sub rdx, rax /* start ptr */
-        mov rax, 1
+        /* Store file path (dont need inbuf length anymore) */
+        mov r14, rax
+
+        mov rdi, r14
+        call nullify_newline
+
+        /* Open file */
+        mov rdi, r14
+        mov rsi, 0
+        mov rdx, 0
+        mov rax, 2
         syscall
 
-        /* Output request
-        mov rdi, 1
-        lea rsi, [rsp + 16]
-        mov rdx, rax
-        mov rax, 1
-        syscall
-        */
+        /* Save open fd (filename no longer needed) */
+        mov r14, rax
 
-        /* Static response */
+        /* Read contents to memory */
+        mov rdi, r14
+
+        sub rsp, 0x200
+        mov rsi, rsp
+
+        mov rdx, 0x200
+        mov rax, 0
+        syscall
+
+        mov r15, rax
+
+        /* Close open file */
+        mov rdi, r14
+        mov rax, 3
+        syscall
+
+        /* Static response (msg header) */
         mov rdi, r13
         lea rsi, OK
-        mov rdx, OK_LEN
+        mov rdx, [OK_LEN]
+        mov rax, 1
+        syscall
+
+        /* Send contents (msb body) */
+        mov rdi, r13
+        mov rsi, rsp
+        mov rdx, r15
         mov rax, 1
         syscall
 
@@ -96,39 +121,41 @@ init_listener:
         mov rax, 41
         syscall
 
-        mov r8, rax /* save sockfd */
+        mov r9, rax /* save sockfd */
+
+        add rsp, 0x10
 
         /* Construct sockaddr_in */
         sub rsp, 16                             /* allocate 16 bytes on stack */
         mov BYTE PTR [rbp - 0x10], 0x02         /* AF_INET */
         mov BYTE PTR [rbp - 0x0f], 0x00
-        mov BYTE PTR [rbp - 0x0e], 0x08         /* port 80 */
+        mov BYTE PTR [rbp - 0x0e], 0x08        /* port 80 */
         mov BYTE PTR [rbp - 0x0d], 0x00
         mov DWORD PTR [rbp - 0x0c], 0x00        /* 0.0.0.0 */
         mov QWORD PTR [rbp - 0x08], 0x00        /* padding */
 
         /* Bind socket */
-        mov rdi, r8
+        mov rdi, r9
         lea rsi, [rbp - 0x10]
         mov rdx, 16
         mov rax, 49
         syscall
 
         /* Listen */
-        mov rdi, r8
+        mov rdi, r9
         mov rsi, 0x00
         mov rax, 50
         syscall
 
         /* Return listening socket */
-        mov rax, r8
+        mov rax, r9
 
         mov rsp, rbp
         pop rbp
         ret
 
 /*
-Takes in a pointer to the HTTP GET request alongside it's length and stores the url path in fname buffer (outbuf_len >= inbuf_len)
+Takes in a pointer to the HTTP GET request alongside its length and stores the url path in fname buffer (outbuf_len >= inbuf_len)
 params: rdi(ptr) outbuf, rsi(ptr) inbuf, rdx(int) inbuf_len
 */
 parse_request:
@@ -188,7 +215,7 @@ find_end:
         cmp rcx, rsi
         jb find_end
 
-        /* Assume str ends with '\0' so it doesn't need to be set */
+        /* Assume str ends with '\0' so it doesnt need to be set */
         jmp parse_token_done
 place_null:
         mov BYTE PTR [rdi + rcx], 0x0
@@ -202,3 +229,29 @@ parse_token_done:
         pop rbp
         ret
 
+/*
+Expects null-terminated string and will replace first newline found with
+'\0'.
+params: rdi(ptr) inbuf
+*/
+nullify_newline:
+        push rbp
+        mov rbp, rsp
+
+        xor rcx, rcx
+keep_reading:
+        cmp BYTE PTR [rdi + rcx], 0x0a
+        je newline_found
+
+        cmp BYTE PTR [rdi + rcx], 0x00
+        je newline_not_found
+
+        inc rcx
+        jmp keep_reading
+
+newline_found:
+        mov BYTE PTR [rdi + rcx], 0x00
+newline_not_found:
+        mov rsp, rbp
+        pop rbp
+        ret

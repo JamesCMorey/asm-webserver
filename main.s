@@ -14,6 +14,7 @@ _start:
         call init_listener
         mov r12, rax /* Save listenfd */
 
+main_loop:
         /* Accept */
         mov rdi, r12
         mov rsi, 0
@@ -24,33 +25,32 @@ _start:
         mov r13, rax /* Save clientfd */
 
         /* Read request */
-        sub rsp, 256
+        sub rsp, 0x110
         mov rdi, r13
-        mov rsi, rsp
-        mov rdx, 256
+        lea rsi, [rbp - 0x100]
+        mov rdx, 0x100
         mov rax, 0
         syscall
 
         mov r14, rax /* save inbuf len */
 
         /* Token 1 */
-        mov rdi, rsp    /* inbuf */
-        mov rsi, r14    /* inbuf len */
-        sub rsp, 16      /* saveptr--16 byte aligned */
-        mov rdx, rsp
+        lea rdi, [rbp - 0x100]    /* inbuf */
+        mov rsi, r14            /* inbuf len */
+        lea rdx, [rbp - 0x110]    /* saveptr */
         call parse_token
 
         /* Token 2 (file path) */
-        lea rdi, [rsp + 16]    /* inbuf */
-        mov rsi, r14    /* inbuf len */
-        mov rdx, rsp    /* saveptr */
+        mov rdi, 0x00           /* inbuf */
+        mov rsi, r14            /* inbuf len */
+        lea rdx, [rbp - 0x110]  /* saveptr */
         call parse_token
 
         /* Store file path (dont need inbuf length anymore) */
         mov r14, rax
 
         mov rdi, r14
-        call nullify_newline
+        call nullify_newline /* Only really needed for testing */
 
         /* Open file */
         mov rdi, r14
@@ -93,10 +93,14 @@ _start:
         mov rax, 1
         syscall
 
+        add rsp, 0x200
+
         /* Close clientfd */
         mov rdi, r13
         mov rax, 3
         syscall
+
+        jmp main_loop
 
         /* Close listenfd */
         mov rdi, r12
@@ -169,7 +173,7 @@ parse_request:
 
 /*
 Parse first token in given text buffer, setting the delimter (space) to '\0' so that the token can
-be read as a string.
+be read as a string. Pass NULL for inbuf to use saved ptr
 params: rdi(ptr) inbuf, rsi(int) inbuf_len, rdx(ptr ptr) saveptr
 returns: ptr to start of token
 */
@@ -180,8 +184,8 @@ parse_token:
         xor rcx, rcx
         mov rax, 0 /* set error code ahead of time */
 
-        cmp QWORD PTR [rdx], 0
-        je find_start
+        cmp rdi, 0
+        jne find_start
 
         /* Use saved pointer */
         mov rdi, [rdx]

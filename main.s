@@ -14,7 +14,7 @@ _start:
         call init_listener
         mov r12, rax /* Save listenfd */
 
-main_loop:
+listener_loop:
         /* Accept */
         mov rdi, r12
         mov rsi, 0
@@ -23,6 +23,25 @@ main_loop:
         syscall
 
         mov r13, rax /* Save clientfd */
+
+        /* Fork to handle client */
+        mov rax, 57
+        syscall
+
+        cmp rax, 0
+        je handle_conn
+
+        /* Close clientfd for listener */
+        mov rdi, r13
+        mov rax, 3
+        syscall
+
+        jmp listener_loop
+handle_conn:
+        /* Close listenfd in child */
+        mov rdi, r12
+        mov rax, 3
+        syscall
 
         /* Read request */
         sub rsp, 0x110
@@ -95,18 +114,12 @@ main_loop:
 
         add rsp, 0x200
 
-        /* Close clientfd */
+        /* Close clientfd in child */
         mov rdi, r13
         mov rax, 3
         syscall
 
-        jmp main_loop
-
-        /* Close listenfd */
-        mov rdi, r12
-        mov rax, 3
-        syscall
-
+exit: /* implement program exits */
         mov rdi, 0
         mov rax, 60
         syscall

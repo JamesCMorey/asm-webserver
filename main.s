@@ -1,10 +1,14 @@
 .intel_syntax noprefix
 
 .section .rodata
-OK:
-    .ascii "HTTP/1.0 200 OK\r\n\r\n"
-OK_LEN:
-    .quad OK_LEN - OK
+/* Protocols */
+GET:         .ascii "GET\0"
+POST:        .ascii "POST\0"
+/* Responses */
+OK:          .ascii "HTTP/1.0 200 OK\r\n\r\n"
+OK_LEN:      .quad OK_LEN - OK
+BAD_REQ:     .ascii "HTTP/1.0 400 Bad Request\r\n\r\n"
+BAD_REQ_LEN: .quad BAD_REQ_LEN - BAD_REQ
 
 .section .text
 .global _start
@@ -75,7 +79,7 @@ init_listener:
     mov BYTE PTR [rbp - 0x10], 0x02     /* AF_INET */
     mov BYTE PTR [rbp - 0x0f], 0x00
     mov BYTE PTR [rbp - 0x0e], 0x08    /* port 80 */
-    mov BYTE PTR [rbp - 0x0d], 0x00
+    mov BYTE PTR [rbp - 0x0d], 0x01
     mov DWORD PTR [rbp - 0x0c], 0x00    /* 0.0.0.0 */
     mov QWORD PTR [rbp - 0x08], 0x00    /* padding */
 
@@ -106,7 +110,9 @@ send_response:
     push r12
     push r13
     push r14
+    push r15
 
+    /* save clientfd */
     mov r12, rdi
 
     /* Read request */
@@ -124,11 +130,10 @@ send_response:
     mov rdx, rax        /* inbuf_len */
     call parse_request
 
-    /* Store file path (dont need inbuf length anymore) */
+    /* Open file */
     mov rdi, rax
     call hr_url
 
-    /* Open file */
     mov rdi, rax
     mov rsi, 0
     mov rdx, 0
@@ -138,6 +143,24 @@ send_response:
     /* Save open fd */
     mov r13, rax
 
+    /* Check verb to determine next action */
+    mov rdi, rsp
+    call hr_verb
+    mov r14, rax
+
+    lea rdi, GET
+    mov rsi, r14
+    call str_eq
+    je handle_get
+
+    lea rdi, POST
+    mov rsi, r14
+    call str_eq
+    je handle_post
+
+    jmp malformed_verb
+
+handle_get:
     /* Read contents to memory */
     mov rdi, r13
     sub rsp, 0x200
@@ -146,7 +169,7 @@ send_response:
     mov rax, 0
     syscall
 
-    mov r14, rax
+    mov r15, rax
 
     /* Close open file */
     mov rdi, r13
@@ -163,10 +186,37 @@ send_response:
     /* Send contents (msb body) */
     mov rdi, r12
     mov rsi, rsp
-    mov rdx, r14
+    mov rdx, r15
     mov rax, 1
     syscall
 
+    jmp send_response_exit
+
+handle_post:
+
+    /* Close open file */
+    mov rdi, r13
+    mov rax, 3
+    syscall
+
+    /* Static response (msg header) */
+    mov rdi, r12
+    lea rsi, OK
+    mov rdx, [OK_LEN]
+    mov rax, 1
+    syscall
+
+    jmp send_response_exit
+
+malformed_verb:
+    /* Static response (msg header) */
+    mov rdi, r12
+    lea rsi, BAD_REQ
+    mov rdx, [BAD_REQ_LEN]
+    mov rax, 1
+    syscall
+
+send_response_exit:
     /* Close clientfd in child */
     mov rdi, r12
     mov rax, 3
@@ -175,6 +225,7 @@ send_response:
     mov r12, [rbp - 8]
     mov r13, [rbp - 16]
     mov r14, [rbp - 24]
+    mov r15, [rbp - 32]
 
     mov rsp, rbp
     pop rbp

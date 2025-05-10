@@ -1,5 +1,8 @@
 .intel_syntax noprefix
 
+.section .rodata
+CLEN:
+    .ascii "Content-Length\0"
 
 /*
 Parses next token in given text buffer up to the specified delimiter.
@@ -27,6 +30,7 @@ SAFETY
     remaining bytes and not be terminated. *saveptr will be set to
     NULL.
 */
+.section .text
 .global parse_token
 parse_token:
     push rbp
@@ -146,30 +150,36 @@ parse_request:
     push rbp
     mov rbp, rsp
 
-    /* Save http_req struct pointer */
-    mov r8, rdi
-    mov r9, rdx
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    /* Save args */
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
 
     /* allocate saveptr */
     sub rsp, 0x10
 
-    xor r10, r10
-
+    xor r15, r15
 verb_and_url: /* Parse verb and url */
-    mov rdi, rsi    /* inbuf */
-    mov rsi, r9     /* inbuf_len */
+    mov rdi, r13     /* inbuf */
+    mov rsi, r14    /* inbuf_len */
     mov rdx, rsp    /* saveptr */
     mov rcx, 0x20   /* space */
     call parse_token
 
-    mov [r8 + r10*8], rax /* Save token */
+    mov [r12 + r15*8], rax /* Save token */
 
-    inc r10
-    cmp r10, 2
+    inc r15
+    cmp r15, 2
     jb verb_and_url
 
-    mov rdi, rsi    /* inbuf */
-    mov rsi, r9     /* inbuf_len */
+    mov rdi, r13     /* inbuf */
+    mov rsi, r14    /* inbuf_len */
     mov rdx, rsp    /* saveptr */
     mov rcx, 0x0a   /* newline */
     call parse_token
@@ -177,21 +187,36 @@ verb_and_url: /* Parse verb and url */
     mov rdi, rax
     call strip_ws   /* remove carriage return */
 
-    mov [r8 + r10*8], rax /* Save token */
+    mov [r12 + r15*8], rax /* Save token */
+
+    /* Check if no headers */
+    mov rax, [rsp]
+    cmp BYTE PTR [rax], 0x0d /* carriage return */
+    je store_body
 
 parse_headers:
     /* parse field name */
-    mov rdi, rsi    /* inbuf */
-    mov rsi, r9     /* inbuf_len */
+    mov rdi, r13     /* inbuf */
+    mov rsi, r14    /* inbuf_len */
     mov rdx, rsp    /* saveptr */
     mov rcx, 0x3a   /* colon */
     call parse_token
 
-    /* TODO: Store field name */
+    mov rbx, rax
+
+    /* Check if field is Content-Length */
+    mov rdi, rax
+    lea rsi, CLEN
+    call str_eq
+
+    test rax, rax
+    jnz store_content_len
+
+    /* TODO: Store field name (rbx) in struct */
 
     /* parse field contents */
-    mov rdi, rsi    /* inbuf */
-    mov rsi, r9     /* inbuf_len */
+    mov rdi, r13     /* inbuf */
+    mov rsi, r14    /* inbuf_len */
     mov rdx, rsp    /* saveptr */
     mov rcx, 0x0a   /* newline */
     call parse_token
@@ -203,21 +228,81 @@ parse_headers:
 
     /* Check if headers end */
     mov rax, [rsp]
-    inc rax
-    cmp [rax], 0x0d /* carriage return */
-    je parse_content
+    cmp BYTE PTR [rax], 0x0d /* carriage return */
+    je store_body
 
     jmp parse_headers
 
-parse_content: /* TODO implement this */
+store_body:  /* TODO implement this */
 /*
     add [rsp], 3 /* set saveptr to after '\r\n' header conclusion
 parse_body:
 */
 
-    mov rax, r8
-
 exit_parse_request:
+    mov rax, r12
+
+    mov rbx, [rbp - 8]
+    mov r12, [rbp - 16]
+    mov r13, [rbp - 24]
+    mov r14, [rbp - 32]
+    mov r15, [rbp - 40]
+
+    mov rsp, rbp
+    pop rbp
+    ret
+
+store_content_len:
+    /* parse field contents */
+    mov rdi, r13     /* inbuf */
+    mov rsi, r14    /* inbuf_len */
+    mov rdx, rsp    /* saveptr */
+    mov rcx, 0x0a   /* newline */
+    call parse_token
+
+    mov rdi, rax
+    call strip_ws   /* remove carriage return */
+
+    /* convert field contents to int and then store */
+    mov rdi, rax
+    call atoi
+    mov [r12 + 40], rax
+
+    /* Check if headers end */
+    mov rax, [rsp]
+    cmp BYTE PTR [rax], 0x0d /* carriage return */
+    je store_body
+
+    jmp parse_headers
+
+/*
+Convert alphanum to integer. Expects c string
+int atoi(char *inbuf);
+*/
+.global atoi
+atoi:
+    push rbp
+    mov rbp, rsp
+
+    xor rax, rax
+    xor rsi, rsi
+    /* rdx could get clobbered by mul so unused */
+    xor rcx, rcx
+parse_anum:
+    mov r8, 10
+    mul r8
+    add rax, rsi
+
+    cmp BYTE PTR [rdi + rcx], 0
+    je atoi_exit
+
+    movzx rsi, BYTE PTR [rdi + rcx]
+    sub rsi, 48
+
+    inc rcx
+    jmp parse_anum
+
+atoi_exit:
     mov rsp, rbp
     pop rbp
     ret
@@ -281,6 +366,39 @@ no_non_ws:
     mov rax, 0
 exit_strip_ws:
     mov BYTE PTR [rdi + rcx + 1], 0
+    mov rsp, rbp
+    pop rbp
+    ret
+
+/*
+Checks equality of C strings.
+
+bool str_eq(char *s1, char *s2);
+*/
+.global str_eq
+str_eq:
+    push rbp
+    mov rbp, rsp
+
+    xor rcx, rcx
+check_char:
+    mov al, [rsi + rcx]
+    cmp [rdi + rcx], al
+    jne str_eq_false
+
+    cmp BYTE PTR [rdi + rcx], 0
+    je str_eq_true
+
+    inc rcx
+    jmp check_char
+
+str_eq_false:
+    mov rax, 0
+    jmp str_eq_exit
+
+str_eq_true:
+    mov rax, 1
+str_eq_exit:
     mov rsp, rbp
     pop rbp
     ret

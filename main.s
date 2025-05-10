@@ -14,7 +14,7 @@ _start:
     call init_listener
     mov r12, rax /* Save listenfd */
 
-listener_loop:
+listener_loop: /* TODO: reap children */
     /* Accept */
     mov rdi, r12
     mov rsi, 0
@@ -37,7 +37,17 @@ listener_loop:
     syscall
 
     jmp listener_loop
-exit: /* implement program exits */
+handle_conn:
+
+    /* Close listenfd in child */
+    mov rdi, r12
+    mov rax, 3
+    syscall
+
+    mov rdi, r13
+    call send_response
+
+exit: /* TODO: implement program exits */
     mov rdi, 0
     mov rax, 60
     syscall
@@ -89,82 +99,82 @@ init_listener:
     pop rbp
     ret
 
-handle_conn:
+send_response:
     push rbp
     mov rbp, rsp
 
-    /* Close listenfd in child */
-    mov rdi, r12
-    mov rax, 3
-    syscall
+    push r12
+    push r13
+    push r14
+
+    mov r12, rdi
 
     /* Read request */
     sub rsp, 0x100
-    mov rdi, r13
+    mov rdi, r12
     lea rsi, [rbp - 0x100]
     mov rdx, 0x100
     mov rax, 0
     syscall
 
     /* Parse the request */
-    sub rsp, 0x30
+    sub rsp, 0x30 /* struct http_req */
     mov rdi, rsp
-
     lea rsi, [rbp - 0x100]  /* inbuf */
     mov rdx, rax        /* inbuf_len */
     call parse_request
 
     /* Store file path (dont need inbuf length anymore) */
-    mov r14, rax
-
-    mov rdi, r14
-    call nullify_newline /* Only really needed for testing */
+    mov rdi, rax
+    call hr_url
 
     /* Open file */
-    mov rdi, r14
+    mov rdi, rax
     mov rsi, 0
     mov rdx, 0
     mov rax, 2
     syscall
 
-    /* Save open fd (filename no longer needed) */
-    mov r14, rax
+    /* Save open fd */
+    mov r13, rax
 
     /* Read contents to memory */
-    mov rdi, r14
-
+    mov rdi, r13
     sub rsp, 0x200
     mov rsi, rsp
-
     mov rdx, 0x200
     mov rax, 0
     syscall
 
-    mov r15, rax
+    mov r14, rax
 
     /* Close open file */
-    mov rdi, r14
+    mov rdi, r13
     mov rax, 3
     syscall
 
     /* Static response (msg header) */
-    mov rdi, r13
+    mov rdi, r12
     lea rsi, OK
     mov rdx, [OK_LEN]
     mov rax, 1
     syscall
 
     /* Send contents (msb body) */
-    mov rdi, r13
+    mov rdi, r12
     mov rsi, rsp
-    mov rdx, r15
+    mov rdx, r14
     mov rax, 1
     syscall
 
     /* Close clientfd in child */
-    mov rdi, r13
+    mov rdi, r12
     mov rax, 3
     syscall
+
+    mov r12, [rbp - 8]
+    mov r13, [rbp - 16]
+    mov r14, [rbp - 24]
 
     mov rsp, rbp
     pop rbp

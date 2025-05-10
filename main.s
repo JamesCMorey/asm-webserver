@@ -130,8 +130,26 @@ send_response:
     mov rdx, rax        /* inbuf_len */
     call parse_request
 
+    /* Check verb to determine next action */
+    mov rdi, rsp
+    call hr_verb
+    mov r14, rax
+
+    lea rdi, GET[rip]
+    mov rsi, r14
+    call str_eq
+    je handle_get
+
+    lea rdi, POST[rip]
+    mov rsi, r14
+    call str_eq
+    je handle_post
+
+    jmp malformed_verb
+
+handle_get:
     /* Open file */
-    mov rdi, rax
+    mov rdi, rsp
     call hr_url
 
     mov rdi, rax
@@ -143,24 +161,6 @@ send_response:
     /* Save open fd */
     mov r13, rax
 
-    /* Check verb to determine next action */
-    mov rdi, rsp
-    call hr_verb
-    mov r14, rax
-
-    lea rdi, GET
-    mov rsi, r14
-    call str_eq
-    je handle_get
-
-    lea rdi, POST
-    mov rsi, r14
-    call str_eq
-    je handle_post
-
-    jmp malformed_verb
-
-handle_get:
     /* Read contents to memory */
     mov rdi, r13
     sub rsp, 0x200
@@ -178,7 +178,7 @@ handle_get:
 
     /* Static response (msg header) */
     mov rdi, r12
-    lea rsi, OK
+    lea rsi, OK[rip]
     mov rdx, [OK_LEN]
     mov rax, 1
     syscall
@@ -193,6 +193,33 @@ handle_get:
     jmp send_response_exit
 
 handle_post:
+    /* Open file */
+    mov rdi, rsp
+    call hr_url
+
+    mov rdi, rax
+    mov rsi, 0x241 /* O_WRONLY | O_CREAT | O_TRUNC */
+    mov rdx, 0x1A4 /* 0644 */
+    mov rax, 2
+    syscall
+
+    /* Save open fd */
+    mov r13, rax
+
+    mov rdi, rsp
+    call hr_body_len
+
+    mov r11, rax /* save body len */
+
+    mov rdi, rsp
+    call hr_body
+
+    /* Write body to file */
+    mov rdi, r13
+    mov rsi, rax
+    mov rdx, r11
+    mov rax, 1
+    syscall
 
     /* Close open file */
     mov rdi, r13
@@ -201,7 +228,7 @@ handle_post:
 
     /* Static response (msg header) */
     mov rdi, r12
-    lea rsi, OK
+    lea rsi, OK[rip]
     mov rdx, [OK_LEN]
     mov rax, 1
     syscall
@@ -211,7 +238,7 @@ handle_post:
 malformed_verb:
     /* Static response (msg header) */
     mov rdi, r12
-    lea rsi, BAD_REQ
+    lea rsi, BAD_REQ[rip]
     mov rdx, [BAD_REQ_LEN]
     mov rax, 1
     syscall

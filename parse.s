@@ -234,10 +234,9 @@ parse_headers:
     jmp parse_headers
 
 store_body:  /* TODO implement this */
-/*
-    add [rsp], 3 /* set saveptr to after '\r\n' header conclusion
-parse_body:
-*/
+    add QWORD PTR [rsp], 2 /* move saveptr to start of body (after '\r\n') */
+    mov rax, [rsp]
+    mov [r12 + 32], rax
 
 exit_parse_request:
     mov rax, r12

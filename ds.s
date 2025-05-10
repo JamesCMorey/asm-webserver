@@ -58,3 +58,14 @@ hr_body_len:
     mov rsp, rbp
     pop rbp
     ret
+
+.global hr_body
+hr_body:
+    push rbp
+    mov rbp, rsp
+
+    mov rax, [rdi + 32]
+
+    mov rsp, rbp
+    pop rbp
+    ret

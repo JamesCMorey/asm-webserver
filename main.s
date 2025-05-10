@@ -78,8 +78,8 @@ init_listener:
     sub rsp, 16                 /* allocate 16 bytes on stack */
     mov BYTE PTR [rbp - 0x10], 0x02     /* AF_INET */
     mov BYTE PTR [rbp - 0x0f], 0x00
-    mov BYTE PTR [rbp - 0x0e], 0x08    /* port 80 */
-    mov BYTE PTR [rbp - 0x0d], 0x01
+    mov BYTE PTR [rbp - 0x0e], 0x00    /* port 80 */
+    mov BYTE PTR [rbp - 0x0d], 0x50
     mov DWORD PTR [rbp - 0x0c], 0x00    /* 0.0.0.0 */
     mov QWORD PTR [rbp - 0x08], 0x00    /* padding */
 
@@ -116,17 +116,17 @@ send_response:
     mov r12, rdi
 
     /* Read request */
-    sub rsp, 0x100
+    sub rsp, 0x200
     mov rdi, r12
-    lea rsi, [rbp - 0x100]
-    mov rdx, 0x100
+    lea rsi, [rbp - 0x200]
+    mov rdx, 0x200
     mov rax, 0
     syscall
 
     /* Parse the request */
     sub rsp, 0x30 /* struct http_req */
     mov rdi, rsp
-    lea rsi, [rbp - 0x100]  /* inbuf */
+    lea rsi, [rbp - 0x200]  /* inbuf */
     mov rdx, rax        /* inbuf_len */
     call parse_request
 
@@ -198,8 +198,8 @@ handle_post:
     call hr_url
 
     mov rdi, rax
-    mov rsi, 0x241 /* O_WRONLY | O_CREAT | O_TRUNC */
-    mov rdx, 0x1A4 /* 0644 */
+    mov rsi, 0x41 /* O_WRONLY | O_CREAT (0x241 to include O_TRUNC) */
+    mov rdx, 0777
     mov rax, 2
     syscall
 
@@ -244,9 +244,10 @@ malformed_verb:
     syscall
 
 send_response_exit:
-    /* Close clientfd in child */
+    /* Shutdown clientfd in child */
     mov rdi, r12
-    mov rax, 3
+    mov rsi, 1
+    mov rax, 48
     syscall
 
     mov r12, [rbp - 8]

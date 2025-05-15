@@ -23,7 +23,8 @@ listener_loop: /* TODO: reap children */
     mov rdi, r12
     mov rsi, 0
     mov rdx, 0
-    mov rax, 43
+    mov rcx, 2048
+    mov rax, 288
     syscall
 
     mov r13, rax /* Save clientfd */
@@ -38,6 +39,14 @@ listener_loop: /* TODO: reap children */
     /* Close clientfd for listener */
     mov rdi, r13
     mov rax, 3
+    syscall
+
+    /* Reap defunct children */
+    mov rdi, -1 /* pid (any) */
+    mov rsi, 0  /* wstatus */
+    mov rdx, 0  /* options */
+    mov rcx, 0  /* rusage */
+    mov rax, 61 /* wait4 */
     syscall
 
     jmp listener_loop
